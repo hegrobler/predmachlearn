@@ -1,0 +1,177 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+
+Executive Summary
+----------------------
+The following analysis attempts to use machine learning to correctly identify how well subjects perform specific activities. The data used in this study was collected as part of a [study](http://groupware.les.inf.puc-rio.br/har) completed in 2012. More information about the dataset can be found on the [publisher site](http://groupware.les.inf.puc-rio.br/har).     
+
+The original dataset contains **19622** observations and **160** variables. The initial exploratory analysis indicated that the amount of variables can be reduced to **52**.
+
+A random forest machine learning method was applied to the data which resulted in a promising model that  seemed to indicate a high level of accuracy. This was confirmed when it was run against the test set and had a **99.48%** accuracy in predicting the 'classe' variable.  
+
+Data Preparation
+---------------------------
+Initial exploratory data analysis revealed some issues with the data that should be resolved before the analysis can take place. Due to the limitation of approximately 2000 words for this report the following section only provides an overview of any exploratory / data transformation steps taken.
+
+Load appropriate libraries as well as the full data and validation sets
+```{r "Load Libs", warning=FALSE, message=FALSE}
+set.seed(1000);
+library(caret)
+library(randomForest)
+
+setwd("~/R/predmachlearn")
+ds = read.csv("pml-training.csv", as.is=TRUE)
+validation = read.csv("pml-testing.csv")
+```
+
+```{r "Data Types", warning=FALSE}
+#Assign the appropriate data types to variables 
+ds$classe <- as.factor(ds$classe)
+
+#Convert all the remaining columns that are incorrectly classified as character to numeric
+classes <- as.character(sapply(ds, class))
+colClasses <- which(classes=="character")
+ds[, colClasses] <- sapply(ds[, colClasses], as.numeric)
+```
+
+#### Remove all variables that do not have much variance.
+Some variables have more than 96% of the observations as NA. Find these columns and remove them from the dataset.
+```{r "Remove NAs"}
+#Find all columns that have mostly NAs ie more than 96% of observations and then remove them
+mostlyNasNames <- sapply(ds, function(x){ sum(!is.na(x)) > 19000})
+mostlyNasNames <- names(mostlyNasNames[mostlyNasNames == TRUE])
+
+ds.complete <- ds[, which(names(ds) %in% mostlyNasNames)]
+ds.complete <- ds.complete[rowSums(is.na(ds.complete)) != ncol(ds.complete),]
+```
+
+Remove the first 5 columns X, user_name, raw_timestamp_part_1, raw_timestamp_part_2 and cvtd_timestamp as these variables are indexes or not related to the specific actions being performed ie. did not come from the measuring devices.
+```{r}
+ds.complete <- ds.complete[,c(-1,-2,-3,-4,-5)]
+
+```
+
+Explicitly check for any variables that do not have much variance and remove them
+```{r "Remove NearZero"}
+nsv <- nearZeroVar(ds.complete, saveMetrics=TRUE)
+nsv[nsv$nzv==TRUE,]
+```
+Note that there are no variables with new zero values (True in the nzv column)
+
+Data Analysis
+-------------
+The original dataset is first split into a training and testing set containing 60% and 40% of the observations respectively.
+
+```{r "Split Data"}
+trainIndex <- createDataPartition(y=ds.complete$classe, p=0.6, list=FALSE)
+train <- ds.complete[trainIndex, ]
+test <- ds.complete[-trainIndex, ]
+```
+
+The following table provides an overview of the number of observations and the number of variables in each dataset.
+
+___           | Observations | Variables
+--------------  |--------------|--------
+Raw training set| `r nrow(ds)` | `r ncol(ds)`
+Raw validation set| `r nrow(validation)` | `r ncol(validation)`
+Train (Incl. classe)           | `r nrow(train)` | `r ncol(train)`
+Test (Incl. classe)          | `r nrow(test)` | `r ncol(test)`
+
+####Model Selection
+The model was trained using the a random forest (*method="rf"*) algorithm using the classe variable as the output and all the remaining variables as the predictors (*classe~.*). Out of bag (OOB) error re-sampling method with 10 re-sampling iterations (*method="oob", number=10*) was used to reduce the risk of overfitting the model instead of cross validation (Breiman, 1996).
+
+```
+#model <- train(classe~., data=train, method="rf", ntree=501, trControl=trainControl(method="oob", number=20), proximity=TRUE, allowParallel=TRUE)
+
+#save(model, file='RForest_Model')
+
+```
+
+```{r}
+#Load model from previous save
+load('RForest_Model')
+print(model$finalModel)
+```
+
+The final model selected (above) indicate an misclassification or out-of-bag (OOB) error rate of only 0.91% which would indicate a very accurate model. The out-of-bag error rate is an accurate indication of how the model would perform on a test set of the similar size (Breiman, 1996b). 
+
+Due to the high accuracy of the random forest approach no other algorithms will be evaluated. That said looking at the variable importance in the next figure it is clear which variables are the most important. The model may be optimized for performance and interpretability by reducing the number of variables at the cost of accuracy.
+
+```{r, fig.width=10, fig.height=8}
+plot(varImp(model))
+```
+
+Another optimization that can be experimented with is to reduce the number of trees used during each of the resampling iterations. Based on the following diagram indicates that the reduction in error stabilized at around 100 trees.
+```{r, fig.width=8, fig.height=5}
+plot(model$finalModel, main = "Error Rate vs Number Of Trees")
+```
+
+####Model Validation
+Validating the model using the test set confirms that the expected **out of sample error rate** is very close to the out of bag rate discussed in the previous section.
+```{r "Verify Test"}
+predictions <- predict(model, newdata=test)
+cm <- confusionMatrix(predictions, test$classe)
+print(cm)
+```
+
+The above output shows a confusion matrix providing an overview of the missclassified observations followed by the overall accuracy statistics. Note the high overall accuracy of `r round(cm$overall[1]*100, digits=2)`%.
+
+####Conclusion
+Using a random forest machine learining algorithm created very accurate classification model with an accuracy of `r round(cm$overall[1]*100, digits=2)`%.
+
+
+Validation Set Prediction
+----------------------
+The following provides an overview of the predicted classifications for the 20 observations in the validation dataset.
+
+Remove all variables from the validation set that is not present in the training set and then run the predictions.
+```{r "Sync Sets"}
+trainNames <- names(train)
+validation.complete <- validation[, which(names(validation) %in% trainNames)]
+validation.predictions <- predict(model, newdata=validation.complete)
+```
+
+Problem Id      | Predicted Class
+--------------  |--------------|--------
+1 | `r validation.predictions[1]`
+2 | `r validation.predictions[2]`
+3 | `r validation.predictions[3]`
+4 | `r validation.predictions[4]`
+5 | `r validation.predictions[5]`
+6 | `r validation.predictions[6]`
+7 | `r validation.predictions[7]`
+8 | `r validation.predictions[8]`
+9 | `r validation.predictions[9]`
+10 | `r validation.predictions[10]`
+11 | `r validation.predictions[11]`
+12 | `r validation.predictions[12]`
+13 | `r validation.predictions[13]`
+14 | `r validation.predictions[14]`
+15 | `r validation.predictions[15]`
+16 | `r validation.predictions[16]`
+17 | `r validation.predictions[17]`
+18 | `r validation.predictions[18]`
+19 | `r validation.predictions[19]`
+20 | `r validation.predictions[20]`
+
+```
+#Write each prediction to a file that can later be submitted on the Coursera site.
+#Iterate through the predictions and write to file
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+warnings()
+pml_write_files(validation.predictions)
+```
+
+References
+--------------------
+- Breiman, L. (1996). Out-of-bag estimation (pp. 1-13). Technical report, Statistics Department, University of California Berkeley, Berkeley CA 94708, 1996b. 33, 34.
+
+- Breiman, L. (2001). Random forests. Machine learning, 45(1), 5-32.
